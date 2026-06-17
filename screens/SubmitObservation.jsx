@@ -1,24 +1,56 @@
 import { useState, useEffect } from "react";
-import {View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Platform, StatusBar, ActivityIndicator, Image, Alert,} from "react-native";
-import * as Location from "expo-location"; //expo location library
-import * as ImagePicker from "expo-image-picker"; //expo image picker library
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Platform,
+  StatusBar,
+  ActivityIndicator,
+  Image,
+  Alert,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location"; // expo location library
+import * as ImagePicker from "expo-image-picker"; // expo image picker library
 import { COLOURS } from "../constants/colours";
 
 const { BG, BG_DARK, WHITE, INPUT_BG, REQUIRED_RED, ACCENT } = COLOURS;
 
-// ─── Dropdown options ────────────────────────────────────────────────────────
+const BACKEND_URL = "http://192.168.0.200:3000"; // TODO: replace with your laptop IP
 
-const WEATHER_PHENOMENA = [
-  "Rainfall", "Hailstorm", "Thunderstorm", "Fog",
-  "Heat Wave", "Cold Wave", "Strong Winds", "Snowfall", "Other",
+// ─── Phenomena options ────────────────────────────────────────────────────────
+
+// These 4 appear as picture tiles in a 2×2 grid. User can pick up to 2 total.
+const GRID_PHENOMENA = [
+  { id: "Rainfall",               emoji: "🌧️", label: "Rainfall" },
+  { id: "Thunderstorm/Lightning", emoji: "⛈️", label: "Thunderstorm/\nLightning" },
+  { id: "Snowfall",               emoji: "❄️", label: "Snowfall" },
+  { id: "Fog",                    emoji: "🌫️", label: "Fog" },
+];
+
+// These appear in the collapsible "Others" dropdown below the grid
+const OTHER_PHENOMENA = [
+  "Heatwave",
+  "Coldwave",
+  "Hailstorm",
+  "Strong Winds",
+  "Specify below", // not called "Others" — user types it in description
 ];
 
 const DAMAGE_OPTIONS = [
-  "No Damage", "Property Damage", "Crop Damage",
-  "Flooding", "Road Blocked", "Power Outage", "Other",
+  "No Damage",
+  "Property Damage",
+  "Crop Damage",
+  "Flooding",
+  "Road Blocked",
+  "Power Outage",
+  "Other",
 ];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getTodayDate() {
   // Returns YYYY-MM-DD in local time (not UTC)
@@ -38,15 +70,12 @@ function getCurrentTime() {
 
 // Reverse geocode lat/lng → { state, district } using OpenStreetMap Nominatim
 // Free, no API key needed. Returns null if it fails.
-//OpenStreetMap's free API. Returns a JSON object containing details (district, state, city, road)
 async function reverseGeocode(lat, lng) {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`; //OpenStreetMap's free API. Returns a JSON object containing details (district, state, city, road)
-    const res = await fetch(url, {
-      headers: { "Accept-Language": "en" },
-    });
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`;
+    const res = await fetch(url, { headers: { "Accept-Language": "en" } });
     const json = await res.json();
-    const addr = json.address || {}; //Returns JSON address object or empty object to avoid crash
+    const addr = json.address || {}; // Returns JSON address object or empty object to avoid crash
 
     // Nominatim field names vary by country — cover common Indian variants
     const district =
@@ -56,7 +85,6 @@ async function reverseGeocode(lat, lng) {
       addr.suburb ||
       addr.city ||
       "";
-
     const state = addr.state || "";
 
     return { state, district };
@@ -73,15 +101,20 @@ function generateCaptcha() {
   return { a, b, answer: a + b };
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SubmitObservation() {
   const [state, setState] = useState("");
   const [district, setDistrict] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [pincodeLoading, setPincodeLoading] = useState(false);
   const [date, setDate] = useState(getTodayDate);   // auto-filled, editable
   const [time, setTime] = useState(getCurrentTime); // auto-filled, editable
-  const [phenomena, setPhenomena] = useState(null);
-  const [showPhenomenaDropdown, setShowPhenomenaDropdown] = useState(false);
+
+  // phenomena is now an array of up to 2 selected strings
+  const [phenomena, setPhenomena] = useState([]);
+  const [showOthersDropdown, setShowOthersDropdown] = useState(false);
+
   const [damage, setDamage] = useState(null);
   const [showDamageDropdown, setShowDamageDropdown] = useState(false);
   const [description, setDescription] = useState("");
@@ -101,10 +134,23 @@ export default function SubmitObservation() {
   const [captchaInput, setCaptchaInput] = useState("");
   const [captchaError, setCaptchaError] = useState(false); // turns input red if wrong
 
-  // ── Auto-detect location on mount ─────────────────────────────────────────
+  // ── Load saved location on mount, fall back to GPS ────────────────────────
   useEffect(() => {
-    detectLocation();
+    loadSavedLocation();
   }, []);
+
+  async function loadSavedLocation() {
+    // Try the location saved during registration first — no GPS needed
+    const savedState = await AsyncStorage.getItem("savedState");
+    const savedDistrict = await AsyncStorage.getItem("savedDistrict");
+    if (savedState && savedDistrict) {
+      setState(savedState);
+      setDistrict(savedDistrict);
+      return;
+    }
+    // Nothing saved yet (e.g. anonymous user) → fall back to GPS
+    detectLocation();
+  }
 
   async function detectLocation() {
     setLocationLoading(true);
@@ -119,9 +165,9 @@ export default function SubmitObservation() {
         return;
       }
 
-      // 2. Get coordinates (timeout after 10 s). The spinner will stop spinning after 10s. Then catch block will run.
+      // 2. Get coordinates (timeout after 10 s)
       const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced, //good enough accuracy, don't drain battery trying to be precise to the cm
+        accuracy: Location.Accuracy.Balanced, // good enough, don't drain battery
         timeInterval: 10000,
       });
 
@@ -143,7 +189,42 @@ export default function SubmitObservation() {
     }
   }
 
-  // ── Photo: pick from gallery ───────────────────────────────────────────────
+  // ── Pincode → state + district via backend → India Post API ───────────────
+  const handlePincodeChange = async (text) => {
+    setPincode(text);
+    if (text.length !== 6) return;
+
+    setPincodeLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/location/pincode/${text}`);
+      const data = await res.json();
+      if (res.ok) {
+        setState(data.state || "");
+        setDistrict(data.district || "");
+      }
+    } catch (_) {
+      // Silent fail — user can still type state/district manually
+    } finally {
+      setPincodeLoading(false);
+    }
+  };
+
+  // ── Phenomena: toggle selection (max 2) ───────────────────────────────────
+  const togglePhenomena = (id) => {
+    setPhenomena((prev) => {
+      if (prev.includes(id)) {
+        // Deselect
+        return prev.filter((p) => p !== id);
+      }
+      if (prev.length >= 2) {
+        Alert.alert("Maximum 2", "You can select up to 2 weather phenomena.");
+        return prev;
+      }
+      return [...prev, id];
+    });
+  };
+
+  // ── Photo: pick from gallery ──────────────────────────────────────────────
   async function handleAddPhotoFromGallery() {
     if (photos.length >= 5) {
       Alert.alert("Limit reached", "You can upload a maximum of 5 photos.");
@@ -170,7 +251,7 @@ export default function SubmitObservation() {
     }
   }
 
-  // ── Photo: take with camera ────────────────────────────────────────────────
+  // ── Photo: take with camera ───────────────────────────────────────────────
   async function handleTakePhoto() {
     if (photos.length >= 5) {
       Alert.alert("Limit reached", "You can upload a maximum of 5 photos.");
@@ -193,13 +274,13 @@ export default function SubmitObservation() {
     }
   }
 
-  // ── Photo: remove one thumbnail ────────────────────────────────────────────
+  // ── Photo: remove one thumbnail ───────────────────────────────────────────
   function handleRemovePhoto(index) {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
     // filter returns a new array with every item EXCEPT the one at this index
   }
 
-  // ── Video: pick from gallery ───────────────────────────────────────────────
+  // ── Video: pick from gallery ──────────────────────────────────────────────
   async function handleAddVideo() {
     if (video) {
       Alert.alert("Video already added", "Remove the existing video before adding a new one.");
@@ -230,28 +311,27 @@ export default function SubmitObservation() {
     }
   }
 
-  // ── Video: remove ──────────────────────────────────────────────────────────
+  // ── Video: remove ─────────────────────────────────────────────────────────
   function handleRemoveVideo() {
     setVideo(null);
   }
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
+  // ── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!state.trim()) {
       alert("Please enter or detect your State.");
       return;
-    } //State is a compulsory question.
+    }
 
     if (!district.trim()) {
       alert("Please enter or detect your District.");
       return;
-    } //District is a compulsory question.
+    }
 
-    // Date was auto-filled but user may have cleared it
     if (!date.trim()) {
       alert("Please enter the Date of the weather event.");
       return;
-    } //Date is a compulsory question.
+    }
 
     // Basic date format check — must look like YYYY-MM-DD
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -260,11 +340,10 @@ export default function SubmitObservation() {
       return;
     }
 
-    // Time was auto-filled but user may have cleared it
     if (!time.trim()) {
       alert("Please enter the Time of the weather event.");
       return;
-    } //Time is a compulsory question.
+    }
 
     // Basic time format check — must look like HH:MM
     const timePattern = /^\d{2}:\d{2}$/;
@@ -273,15 +352,15 @@ export default function SubmitObservation() {
       return;
     }
 
-    if (!phenomena) {
-      alert("Please select a Weather Phenomena.");
+    if (phenomena.length === 0) {
+      alert("Please select at least one Weather Phenomena.");
       return;
-    } //Weather phenomena is a compulsory question.
+    }
 
     if (!damage) {
       alert("Please select Damage Caused.");
       return;
-    } //Damage caused is a compulsory question.
+    }
 
     // At least 1 photo is required
     if (photos.length === 0) {
@@ -298,9 +377,20 @@ export default function SubmitObservation() {
       return;
     }
 
-    const observation = { state, district, date, time, phenomena, damage, description, photoCount: photos.length, hasVideo: !!video };
+    const observation = {
+      state,
+      district,
+      date,
+      time,
+      phenomena,
+      damage,
+      description,
+      photoCount: photos.length,
+      hasVideo: !!video,
+    };
     console.log("Observation submitted:", observation);
     alert("Observation submitted! (mock)");
+    // TODO: replace with real API call to POST /observations
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -317,21 +407,39 @@ export default function SubmitObservation() {
         <Text style={styles.headerTitle}>Crowd Source</Text>
       </View>
 
-      <ScrollView //Scroll view for the whole screen
+      <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
 
+        {/* ── LOCATION ──────────────────────────────────────────────────── */}
+        {/* Pincode auto-fills state + district. GPS is a fallback. */}
+
+        <Text style={styles.label}>Pincode</Text>
+        <View style={styles.pincodeRow}>
+          <TextInput
+            style={[styles.input, { flex: 1 }]}
+            placeholder="Enter 6-digit pincode to update location"
+            placeholderTextColor="#aaa"
+            keyboardType="number-pad"
+            maxLength={6}
+            value={pincode}
+            onChangeText={handlePincodeChange}
+          />
+          {pincodeLoading && (
+            <ActivityIndicator size="small" color={WHITE} style={{ marginLeft: 10 }} />
+          )}
+        </View>
+
         {/* STATE */}
         <View style={styles.labelRow}>
           <Text style={styles.label}>State</Text>
-          {locationLoading && (
+          {locationLoading ? (
             <ActivityIndicator size="small" color={WHITE} style={{ marginLeft: 8 }} />
-          )}
-          {!locationLoading && (
+          ) : (
             <TouchableOpacity onPress={detectLocation}>
-              <Text style={styles.detectBtn}>📍 Detect</Text>
+              <Text style={styles.detectBtn}>📍 GPS Detect</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -385,34 +493,81 @@ export default function SubmitObservation() {
           placeholderTextColor="#aaa"
         />
 
-        {/* WEATHER PHENOMENA */}
-        <TouchableOpacity
-          style={styles.phenomenaHeader}
-          onPress={() => setShowPhenomenaDropdown(!showPhenomenaDropdown)} //If dropdown is visible, clicking it will make it invisible, and vice-versa
-        >
-          <Text style={styles.phenomenaHeaderText}>
-            Weather Phenomena <Text style={styles.required}>*</Text>
-          </Text>
-          <Text style={styles.dropdownArrow}>{showPhenomenaDropdown ? "▲" : "▼"}</Text>
-        </TouchableOpacity>
-        {showPhenomenaDropdown && (
-          <View style={styles.dropdown}>
-            {WEATHER_PHENOMENA.map((item) => (
+        {/* ── WEATHER PHENOMENA ──────────────────────────────────────────── */}
+        <Text style={styles.label}>
+          Weather Phenomena <Text style={styles.required}>*</Text>
+          <Text style={styles.labelNote}> (select up to 2)</Text>
+        </Text>
+
+        {/* 2×2 picture grid for the 4 most common phenomena */}
+        <View style={styles.phenomenaGrid}>
+          {GRID_PHENOMENA.map((item) => {
+            const selected = phenomena.includes(item.id);
+            return (
               <TouchableOpacity
-                key={item}
-                style={[styles.dropdownItem, phenomena === item && styles.dropdownItemSelected]}
-                onPress={() => { setPhenomena(item); setShowPhenomenaDropdown(false); }}
+                key={item.id}
+                style={[styles.phenomenaTile, selected && styles.phenomenaTileSelected]}
+                onPress={() => togglePhenomena(item.id)}
+                activeOpacity={0.75}
               >
-                <Text style={[styles.dropdownItemText, phenomena === item && styles.dropdownItemTextSelected]}>
-                  {item}
+                <Text style={styles.phenomenaEmoji}>{item.emoji}</Text>
+                <Text style={[styles.phenomenaTileLabel, selected && styles.phenomenaTileLabelSelected]}>
+                  {item.label}
                 </Text>
+                {/* Checkmark badge overlaid on top-right when selected */}
+                {selected && <Text style={styles.phenomenaCheck}>✓</Text>}
               </TouchableOpacity>
-            ))}
+            );
+          })}
+        </View>
+
+        {/* Collapsible "Others" dropdown for less common phenomena */}
+        <TouchableOpacity
+          style={[styles.othersToggle, showOthersDropdown && styles.othersToggleOpen]}
+          onPress={() => setShowOthersDropdown(!showOthersDropdown)}
+        >
+          <Text style={styles.othersToggleText}>
+            {/* Show which "other" options are selected, if any */}
+            {OTHER_PHENOMENA.some((o) => phenomena.includes(o))
+              ? `Others: ${OTHER_PHENOMENA.filter((o) => phenomena.includes(o)).join(", ")}`
+              : "Others"}
+          </Text>
+          <Text style={styles.dropdownArrow}>{showOthersDropdown ? "▲" : "▼"}</Text>
+        </TouchableOpacity>
+        {showOthersDropdown && (
+          <View style={styles.dropdown}>
+            {OTHER_PHENOMENA.map((item) => {
+              const selected = phenomena.includes(item);
+              return (
+                <TouchableOpacity
+                  key={item}
+                  style={[styles.dropdownItem, selected && styles.dropdownItemSelected]}
+                  onPress={() => {
+                    togglePhenomena(item);
+                    setShowOthersDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownItemText, selected && styles.dropdownItemTextSelected]}>
+                    {item}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
-        {phenomena && !showPhenomenaDropdown && (
-          <View style={styles.selectedTag}>
-            <Text style={styles.selectedTagText}>{phenomena}</Text>
+
+        {/* Selected phenomena tags — tap to deselect */}
+        {phenomena.length > 0 && (
+          <View style={styles.selectedTagsRow}>
+            {phenomena.map((p) => (
+              <TouchableOpacity
+                key={p}
+                style={styles.selectedTag}
+                onPress={() => togglePhenomena(p)}
+              >
+                <Text style={styles.selectedTagText}>{p}  ✕</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
 
@@ -453,7 +608,7 @@ export default function SubmitObservation() {
           <TextInput
             style={styles.textArea}
             value={description}
-            onChangeText={(t) => t.length <= 250 && setDescription(t)} //Cannot type more than 250 characters
+            onChangeText={(t) => t.length <= 250 && setDescription(t)} // Cannot type more than 250 characters
             placeholder="Enter text..........."
             placeholderTextColor="#aaa"
             multiline
@@ -462,7 +617,7 @@ export default function SubmitObservation() {
           <Text style={styles.charCount}>{description.length}/250</Text>
         </View>
 
-        {/* ── PHOTOS ──────────────────────────────────────────────────────── */}
+        {/* ── PHOTOS ────────────────────────────────────────────────────── */}
         <Text style={styles.label}>
           Photos <Text style={styles.required}>*</Text>
           <Text style={styles.labelNote}> (min 1, max 5)</Text>
@@ -496,7 +651,7 @@ export default function SubmitObservation() {
         </ScrollView>
         <Text style={styles.mediaCount}>{photos.length}/5 photos added</Text>
 
-        {/* ── VIDEO ───────────────────────────────────────────────────────── */}
+        {/* ── VIDEO ─────────────────────────────────────────────────────── */}
         <Text style={styles.label}>
           Video <Text style={styles.labelNote}>(optional, max 30 seconds)</Text>
         </Text>
@@ -517,8 +672,10 @@ export default function SubmitObservation() {
           </TouchableOpacity>
         )}
 
-        {/* ── CAPTCHA ─────────────────────────────────────────────────────── */}
-        <Text style={styles.label}>Verification <Text style={styles.required}>*</Text></Text>
+        {/* ── CAPTCHA ───────────────────────────────────────────────────── */}
+        <Text style={styles.label}>
+          Verification <Text style={styles.required}>*</Text>
+        </Text>
         <View style={styles.captchaBox}>
           {/* The math question — regenerated each time user gets it wrong or taps refresh */}
           <Text style={styles.captchaQuestion}>What is {captcha.a} + {captcha.b}?</Text>
@@ -579,6 +736,12 @@ const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: BG },
   scrollContent: { paddingHorizontal: 16, paddingTop: 8 },
 
+  // Pincode row (input + spinner side by side)
+  pincodeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
   // Label row with inline Detect button
   labelRow: {
     flexDirection: "row",
@@ -591,7 +754,7 @@ const styles = StyleSheet.create({
   detectBtn: { color: "#90caf9", fontSize: 13, marginLeft: 10, marginBottom: 6 },
   locationError: { color: "#ffcdd2", fontSize: 12, marginTop: 4, marginBottom: 2 },
 
-  required: { color: REQUIRED_RED }, //required asterisk
+  required: { color: REQUIRED_RED }, // required asterisk
   input: {
     backgroundColor: INPUT_BG,
     borderRadius: 6,
@@ -608,27 +771,94 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   calIcon: { paddingHorizontal: 12, fontSize: 20 },
-  phenomenaHeader: {
+
+  // ── Phenomena grid ──────────────────────────────────────────────────────────
+  phenomenaGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 6,
+  },
+  phenomenaTile: {
+    // "47%" gives two tiles per row with the gap between them
+    width: "47%",
     backgroundColor: BG_DARK,
-    borderRadius: 6,
+    borderRadius: 10,
+    paddingVertical: 18,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    position: "relative",
+  },
+  phenomenaTileSelected: {
+    borderColor: ACCENT,
+    backgroundColor: "rgba(66,133,244,0.15)",
+  },
+  phenomenaEmoji: {
+    fontSize: 32,
+    marginBottom: 6,
+  },
+  phenomenaTileLabel: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+  phenomenaTileLabelSelected: {
+    color: WHITE,
+    fontWeight: "600",
+  },
+  phenomenaCheck: {
+    // Blue tick badge overlaid on top-right of tile when selected
+    position: "absolute",
+    top: 8,
+    right: 10,
+    color: ACCENT,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  // ── Others dropdown ─────────────────────────────────────────────────────────
+  othersToggle: {
+    backgroundColor: BG_DARK,
+    borderRadius: 8,
     paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginTop: 14,
+    paddingVertical: 13,
+    marginTop: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
   },
-  phenomenaHeaderText: { color: WHITE, fontSize: 15 },
+  othersToggleOpen: {
+    // When open, square off the bottom corners so it flows into the dropdown
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  othersToggleText: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 14,
+  },
   dropdownArrow: { color: WHITE, fontSize: 13 },
+
+  // ── Selected tags row ───────────────────────────────────────────────────────
+  selectedTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
   selectedTag: {
     backgroundColor: ACCENT,
     alignSelf: "flex-start",
     borderRadius: 4,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    marginTop: 8,
   },
   selectedTagText: { color: WHITE, fontSize: 13 },
+
+  // ── Shared dropdown ─────────────────────────────────────────────────────────
   selectBox: {
     backgroundColor: INPUT_BG,
     borderRadius: 6,
@@ -657,6 +887,8 @@ const styles = StyleSheet.create({
   dropdownItemSelected: { backgroundColor: "#e3f0fc" },
   dropdownItemText: { fontSize: 15, color: "#222" },
   dropdownItemTextSelected: { color: ACCENT, fontWeight: "500" },
+
+  // ── Description ─────────────────────────────────────────────────────────────
   textAreaWrapper: { backgroundColor: INPUT_BG, borderRadius: 6 },
   textArea: {
     paddingHorizontal: 14,
@@ -668,7 +900,7 @@ const styles = StyleSheet.create({
   },
   charCount: { textAlign: "right", paddingRight: 12, paddingBottom: 8, fontSize: 12, color: "#888" },
 
-  // Photos
+  // ── Photos ──────────────────────────────────────────────────────────────────
   photoRow: { flexDirection: "row", marginTop: 4, marginBottom: 4 },
   photoThumb: {
     width: 80, height: 80, borderRadius: 8,
@@ -693,7 +925,7 @@ const styles = StyleSheet.create({
   addMediaLabel: { color: "#ccc", fontSize: 11, marginTop: 4 },
   mediaCount: { color: "#aaa", fontSize: 11, marginBottom: 4 },
 
-  // Video
+  // ── Video ───────────────────────────────────────────────────────────────────
   addVideoBtn: {
     borderWidth: 1.5, borderColor: "#aaa", borderStyle: "dashed",
     borderRadius: 6, paddingVertical: 14, alignItems: "center",
@@ -709,7 +941,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6,
   },
 
-  // Captcha
+  // ── Captcha ─────────────────────────────────────────────────────────────────
   captchaBox: {
     backgroundColor: BG_DARK, borderRadius: 8, padding: 14, marginTop: 4,
   },
@@ -726,6 +958,7 @@ const styles = StyleSheet.create({
   captchaRefreshText: { color: WHITE, fontSize: 13 },
   captchaErrorText: { color: "#ffcdd2", fontSize: 12, textAlign: "center", marginTop: 6 },
 
+  // ── Submit ──────────────────────────────────────────────────────────────────
   submitBtn: {
     backgroundColor: ACCENT,
     borderRadius: 8,

@@ -33,10 +33,10 @@ const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString()
 // mode: "login"    → fails if user does not exist
 // mode: "register" → fails if user already fully registered
 app.post('/auth/send-otp', async (req, res) => {
-  const { email, mode } = req.body;
+  const { email, username, mode } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
-  if (!mode || !['login', 'register'].includes(mode))
-    return res.status(400).json({ message: 'Mode must be login or register' });
+  if (!mode || !['login', 'register', 'resend'].includes(mode))
+    return res.status(400).json({ message: 'Mode must be login, register, or resend' });
 
   try {
     const existing = await pool.query(
@@ -54,7 +54,7 @@ app.post('/auth/send-otp', async (req, res) => {
         // OTP was cleared after verification = fully registered account
         return res.status(409).json({ message: 'Already have an account! Please log in.' });
       }
-      // OTP still set = incomplete registration, resend OTP and let them retry
+      // OTP still set = incomplete registration — resend OTP and let them retry
       const otp = generateOtp();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
       await pool.query(
@@ -70,18 +70,29 @@ app.post('/auth/send-otp', async (req, res) => {
       return res.json({ message: 'OTP sent' });
     }
 
+    // Check username uniqueness before inserting (register mode only)
+    if (mode === 'register' && username) {
+      const usernameCheck = await pool.query(
+        `SELECT 1 FROM "Users" WHERE username = $1 LIMIT 1`,
+        [username]
+      );
+      if (usernameCheck.rows.length > 0) {
+        return res.status(409).json({ message: 'This username is already taken.' });
+      }
+    }
+
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     if (mode === 'register') {
-      // Insert new user row with just email + OTP
+      // Insert new user row with email + username + OTP
       await pool.query(
-        `INSERT INTO "Users" (email, otp, "otpExpiresAt", "creationDate", "creationTime", "noOfSubs")
-         VALUES ($1, $2, $3, CURRENT_DATE, CURRENT_TIME, 0)`,
-        [email, otp, expiresAt]
+        `INSERT INTO "Users" (email, username, otp, "otpExpiresAt", "creationDate", "creationTime", "noOfSubs")
+         VALUES ($1, $2, $3, $4, CURRENT_DATE, CURRENT_TIME, 0)`,
+        [email, username || null, otp, expiresAt]
       );
     } else {
-      // Login: just update OTP on existing row
+      // Login or resend: just update OTP on existing row
       await pool.query(
         `UPDATE "Users" SET otp = $2, "otpExpiresAt" = $3 WHERE email = $1`,
         [email, otp, expiresAt]
@@ -140,23 +151,37 @@ app.post('/auth/verify-otp', async (req, res) => {
 });
 
 // ── POST /auth/complete-registration ────────────────────────────────────────
-// Called after OTP verified — saves mobile number, state, district, savedLoc
+// Called after OTP verified — saves username, mobile number, state, district
 app.post('/auth/complete-registration', async (req, res) => {
-  const { email, mobNo, state, district } = req.body;
+  const { email, username, mobNo, state, district } = req.body;
   if (!email) return res.status(400).json({ message: 'Email required' });
 
   try {
+    // If username was changed between send-otp and complete-registration,
+    // check uniqueness again before saving
+    if (username) {
+      const usernameCheck = await pool.query(
+        `SELECT 1 FROM "Users" WHERE username = $1 AND email != $2 LIMIT 1`,
+        [username, email]
+      );
+      if (usernameCheck.rows.length > 0) {
+        return res.status(409).json({ message: 'This username is already taken.' });
+      }
+    }
+
     await pool.query(
       `UPDATE "Users"
-       SET "mobNo" = $2,
-           state = $3,
-           district = $4,
-           "savedLoc" = $5,
+       SET username = $2,
+           "mobNo" = $3,
+           state = $4,
+           district = $5,
+           "savedLoc" = $6,
            "lastDate" = CURRENT_DATE,
            "lastTime" = CURRENT_TIME
        WHERE email = $1`,
       [
         email,
+        username || null,
         mobNo || null,
         state || null,
         district || null,
@@ -167,6 +192,26 @@ app.post('/auth/complete-registration', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Failed to complete registration' });
+  }
+});
+
+// ── GET /auth/check-username ─────────────────────────────────────────────────
+// Called on blur in the Register form to check if a username is already taken.
+// Returns { taken: true/false }
+app.get('/auth/check-username', async (req, res) => {
+  const { username } = req.query;
+  if (!username) return res.status(400).json({ message: 'Username required.' });
+
+  try {
+    const result = await pool.query(
+      `SELECT 1 FROM "Users" WHERE username = $1 LIMIT 1`,
+      [username]
+    );
+    // result.rows.length > 0 means the username already exists in the DB
+    return res.json({ taken: result.rows.length > 0 });
+  } catch (err) {
+    console.error('check-username error:', err);
+    return res.status(500).json({ message: 'Server error.' });
   }
 });
 

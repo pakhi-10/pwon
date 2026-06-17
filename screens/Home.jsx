@@ -30,6 +30,34 @@ export default function Home({ navigation }) {
           <Text style={styles.primaryButtonIcon}>🌦️</Text>
           <Text style={styles.primaryButtonText}>Submit Observation</Text>
         </TouchableOpacity>
+
+        {/* ── Additional navigation ── */}
+<TouchableOpacity
+  style={styles.secondaryButton}
+  onPress={() => navigation.navigate("MySubmissions")}
+  activeOpacity={0.8}
+>
+  <Text style={styles.secondaryButtonIcon}>📋</Text>
+  <Text style={styles.secondaryButtonText}>My Submissions</Text>
+</TouchableOpacity>
+
+<TouchableOpacity
+  style={styles.secondaryButton}
+  onPress={() => navigation.navigate("Feedback")}
+  activeOpacity={0.8}
+>
+  <Text style={styles.secondaryButtonIcon}>💬</Text>
+  <Text style={styles.secondaryButtonText}>Feedback</Text>
+</TouchableOpacity>
+
+<TouchableOpacity
+  style={styles.secondaryButton}
+  onPress={() => navigation.navigate("ContactUs")}
+  activeOpacity={0.8}
+>
+  <Text style={styles.secondaryButtonIcon}>📞</Text>
+  <Text style={styles.secondaryButtonText}>Contact Us</Text>
+</TouchableOpacity>
       </View>
     </View>
   );
@@ -80,4 +108,24 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
+  secondaryButton: {
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderRadius: 12,
+  paddingVertical: 14,
+  paddingHorizontal: 18,
+  marginTop: 10,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+secondaryButtonIcon: {
+  fontSize: 18,
+  marginRight: 12,
+},
+secondaryButtonText: {
+  color: WHITE,
+  fontSize: 15,
+  fontWeight: "500",
+},
 });

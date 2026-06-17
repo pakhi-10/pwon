@@ -6,6 +6,9 @@ import Login from "./screens/Login";
 import Register from "./screens/Register";
 import Home from "./screens/Home";
 import SubmitObservation from "./screens/SubmitObservation";
+import MySubmissions from "./screens/MySubmissions";
+import ContactUs from "./screens/ContactUs";
+import Feedback from "./screens/Feedback";
 
 const Stack = createStackNavigator();
 
@@ -18,6 +21,9 @@ export default function App() {
         <Stack.Screen name="Register" component={Register} />
         <Stack.Screen name="Home" component={Home} />
         <Stack.Screen name="SubmitObservation" component={SubmitObservation} />
+        <Stack.Screen name="MySubmissions" component={MySubmissions} />
+        <Stack.Screen name="Feedback" component={Feedback} />
+        <Stack.Screen name="ContactUs" component={ContactUs} />
       </Stack.Navigator>
     </NavigationContainer>
   );

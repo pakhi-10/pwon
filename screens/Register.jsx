@@ -26,8 +26,11 @@ export default function Register({ navigation }) {
   // Step 1: details
   const [email, setEmail] = useState("");
   const [confirmEmail, setConfirmEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [mobNo, setMobNo] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [usernameError, setUsernameError] = useState("");
+  const [usernameChecking, setUsernameChecking] = useState(false);
 
   // Step 2: OTP
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
@@ -55,10 +58,48 @@ export default function Register({ navigation }) {
     return local[0] + "***@" + domain;
   };
 
+  // ── Username: check uniqueness on blur ──────────────────────────────────────
+  const handleUsernameBlur = async () => {
+    setUsernameError("");
+    const u = username.trim();
+
+    if (!u) return; // required check happens on submit
+    if (u.length < 5) {
+      setUsernameError("Username must be at least 5 characters.");
+      return;
+    }
+    if (u.length > 50) {
+      setUsernameError("Username must be under 50 characters.");
+      return;
+    }
+    // Only letters, numbers, underscores — no spaces or special chars
+    if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+      setUsernameError("Only letters, numbers, and underscores allowed.");
+      return;
+    }
+
+    setUsernameChecking(true);
+    try {
+      const res = await fetch(
+        `${BACKEND_URL}/auth/check-username?username=${encodeURIComponent(u)}`
+      );
+      const data = await res.json();
+      if (!res.ok || data.taken) {
+        setUsernameError("This username is already taken.");
+      }
+    } catch {
+      // Silent — don't block user if network is flaky; server will catch at submit
+    } finally {
+      setUsernameChecking(false);
+    }
+  };
+
   // ── Step 1: Send OTP ────────────────────────────────────────────────────────
   const handleSendOtp = async () => {
     setEmailError("");
+    setUsernameError("");
 
+    // Validate email
     if (!email.trim()) {
       setEmailError("Email is required.");
       return;
@@ -67,6 +108,26 @@ export default function Register({ navigation }) {
       setEmailError("Emails do not match.");
       return;
     }
+
+    // Validate username
+    if (!username.trim()) {
+      setUsernameError("Username is required.");
+      return;
+    }
+    if (username.trim().length < 5) {
+      setUsernameError("Username must be at least 5 characters.");
+      return;
+    }
+    if (username.trim().length > 50) {
+      setUsernameError("Username must be under 50 characters.");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(username.trim())) {
+      setUsernameError("Only letters, numbers, and underscores allowed.");
+      return;
+    }
+
+    // Validate mobile (optional field)
     if (mobNo && mobNo.length !== 10) {
       Alert.alert("Invalid mobile number", "Mobile number must be exactly 10 digits.");
       return;
@@ -77,7 +138,11 @@ export default function Register({ navigation }) {
       const res = await fetch(`${BACKEND_URL}/auth/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), mode: "register" }),
+        body: JSON.stringify({
+          email: email.trim(),
+          username: username.trim(),
+          mode: "register",
+        }),
       });
       const data = await res.json();
 
@@ -147,7 +212,6 @@ export default function Register({ navigation }) {
 
       // Move to location step
       setStep("location");
-      //detectLocationFromGps();
     } catch (err) {
       Alert.alert("Network error", "Could not reach the server.");
     } finally {
@@ -163,12 +227,9 @@ export default function Register({ navigation }) {
       const res = await fetch(`${BACKEND_URL}/auth/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Re-send uses register mode but user already exists now — use a resend endpoint
-        // For now: just send a new OTP by updating it directly
+        // TODO Week 3: add a dedicated /auth/resend-otp endpoint
         body: JSON.stringify({ email: email.trim(), mode: "resend" }),
       });
-      // If backend rejects (user exists conflict), that's fine — OTP resend
-      // TODO Week 3: add a dedicated /auth/resend-otp endpoint
       setCountdown(30);
     } catch (err) {
       Alert.alert("Network error", "Could not reach the server.");
@@ -184,7 +245,7 @@ export default function Register({ navigation }) {
     setLocationLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      console.log("GPS permission status:", status); // log 1
+      console.log("GPS permission status:", status);
       if (status !== "granted") {
         setLocationLoading(false);
         return;
@@ -196,7 +257,7 @@ export default function Register({ navigation }) {
         const last = await Location.getLastKnownPositionAsync({
           maxAge: 5 * 60 * 1000,
         });
-        console.log("Last known position:", last); // log 2
+        console.log("Last known position:", last);
         if (last) coords = last.coords;
       } catch (_) {}
 
@@ -214,7 +275,7 @@ export default function Register({ navigation }) {
         } catch (_) {}
       }
 
-      console.log("Final coords:", coords); // log 3
+      console.log("Final coords:", coords);
 
       if (!coords) {
         setLocationLoading(false);
@@ -226,7 +287,7 @@ export default function Register({ navigation }) {
         { headers: { "User-Agent": "PWON-IMD-App/1.0" } }
       );
       const nominatimData = await nominatimRes.json();
-      console.log("Nominatim response:", nominatimData); // log 4
+      console.log("Nominatim response:", nominatimData);
 
       const addr = nominatimData.address || {};
       const detectedState = addr.state || addr.city || "";
@@ -234,13 +295,13 @@ export default function Register({ navigation }) {
         addr.county || addr.district || addr.city_district || addr.suburb || addr.city || "";
       const detectedPincode = addr.postcode || "";
 
-      console.log("Detected:", detectedState, detectedDistrict, detectedPincode); // log 5
+      console.log("Detected:", detectedState, detectedDistrict, detectedPincode);
 
       if (detectedState) setState(detectedState);
       if (detectedDistrict) setDistrict(detectedDistrict);
       if (detectedPincode) setPincode(detectedPincode);
     } catch (err) {
-      console.log("GPS error:", err.message); // log 6
+      console.log("GPS error:", err.message);
     } finally {
       setLocationLoading(false);
     }
@@ -256,7 +317,7 @@ export default function Register({ navigation }) {
       const res = await fetch(`${BACKEND_URL}/location/pincode/${text}`);
       const data = await res.json();
       if (res.ok) {
-        console.log("Pincode data:", data); // debug
+        console.log("Pincode data:", data);
         setState(data.state || "");
         setDistrict(data.district || "");
       }
@@ -282,6 +343,7 @@ export default function Register({ navigation }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: email.trim(),
+          username: username.trim(),
           mobNo: mobNo || null,
           state,
           district,
@@ -357,6 +419,42 @@ export default function Register({ navigation }) {
           />
           {emailError ? (
             <Text style={styles.errorText}>{emailError}</Text>
+          ) : null}
+
+          <Text style={styles.label}>
+            Username <Text style={styles.required}>*</Text>
+          </Text>
+          {/* usernameRow keeps the spinner inline with the input */}
+          <View style={styles.usernameRow}>
+            <TextInput
+              style={[
+                styles.input,
+                { flex: 1 },
+                usernameError ? styles.inputError : null,
+              ]}
+              placeholder="min 5 chars, letters / numbers / _"
+              placeholderTextColor="rgba(0,0,0,0.4)"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={username}
+              onChangeText={(t) => {
+                setUsername(t);
+                setUsernameError("");
+              }}
+              onBlur={handleUsernameBlur}
+              maxLength={50}
+            />
+            {/* Spinner appears while uniqueness check is in flight */}
+            {usernameChecking && (
+              <ActivityIndicator
+                size="small"
+                color={WHITE}
+                style={{ marginLeft: 10 }}
+              />
+            )}
+          </View>
+          {usernameError ? (
+            <Text style={styles.errorText}>{usernameError}</Text>
           ) : null}
 
           <Text style={styles.label}>
@@ -554,15 +652,6 @@ export default function Register({ navigation }) {
           )}
         </TouchableOpacity>
 
-        {/*<TouchableOpacity
-          onPress={() => {
-            //Skip location — go straight to app
-            navigation.navigate("SubmitObservation");
-          }}
-        >
-          <Text style={styles.linkText}>Skip for now</Text>
-        </TouchableOpacity>*/}
-
         <View style={{ height: 40 }} />
       </ScrollView>
     </KeyboardAvoidingView>
@@ -639,6 +728,10 @@ const styles = StyleSheet.create({
     color: REQUIRED_RED,
     fontSize: 12,
     marginTop: 4,
+  },
+  usernameRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   phoneRow: {
     flexDirection: "row",
