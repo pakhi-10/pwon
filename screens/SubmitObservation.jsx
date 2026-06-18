@@ -103,7 +103,7 @@ function generateCaptcha() {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SubmitObservation() {
+export default function SubmitObservation({ navigation }) {
   const [state, setState] = useState("");
   const [district, setDistrict] = useState("");
   const [pincode, setPincode] = useState("");
@@ -133,6 +133,9 @@ export default function SubmitObservation() {
   const [captcha, setCaptcha] = useState(generateCaptcha);
   const [captchaInput, setCaptchaInput] = useState("");
   const [captchaError, setCaptchaError] = useState(false); // turns input red if wrong
+
+  // Submission loading state
+  const [submitting, setSubmitting] = useState(false);
 
   // ── Load saved location on mount, fall back to GPS ────────────────────────
   useEffect(() => {
@@ -236,7 +239,7 @@ export default function SubmitObservation() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: "Images",
       quality: 0.8,
       allowsMultipleSelection: true, // works on iOS 14+; Android picks one at a time
       selectionLimit: 5 - photos.length,
@@ -263,7 +266,7 @@ export default function SubmitObservation() {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: "Images",
       quality: 0.8,
     });
     if (!result.canceled) {
@@ -292,7 +295,7 @@ export default function SubmitObservation() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: "Videos",
       videoMaxDuration: 30, // seconds — note: some Android versions ignore this
       quality: ImagePicker.UIImagePickerControllerQualityType.Medium,
     });
@@ -317,7 +320,7 @@ export default function SubmitObservation() {
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!state.trim()) {
       alert("Please enter or detect your State.");
       return;
@@ -362,9 +365,9 @@ export default function SubmitObservation() {
       return;
     }
 
-    // At least 1 photo is required
-    if (photos.length === 0) {
-      alert("Please add at least 1 photo of the weather event.");
+    // At least 1 photo OR a video is required
+    if (photos.length === 0 && !video) {
+      alert("Please add at least 1 photo or a video of the weather event.");
       return;
     }
 
@@ -377,20 +380,58 @@ export default function SubmitObservation() {
       return;
     }
 
-    const observation = {
-      state,
-      district,
-      date,
-      time,
-      phenomena,
-      damage,
-      description,
-      photoCount: photos.length,
-      hasVideo: !!video,
-    };
-    console.log("Observation submitted:", observation);
-    alert("Observation submitted! (mock)");
-    // TODO: replace with real API call to POST /observations
+    setSubmitting(true);
+    try {
+      // Read the logged-in user's email and username from AsyncStorage.
+      // Both will be null if the user isn't logged in (anonymous submission).
+      const userEmail = await AsyncStorage.getItem("userEmail");
+      const username = await AsyncStorage.getItem("username");
+
+      const body = {
+        state: state.trim(),
+        district: district.trim(),
+        date: date.trim(),
+        time: time.trim(),
+        phenomena,          // array e.g. ["Rainfall", "Fog"]
+        damage,
+        description: description.trim() || null,
+        userEmail,          // FK into Users(email), null if anonymous
+        username,           // display name in the "user" column, null if anonymous
+      };
+
+      const res = await fetch(`${BACKEND_URL}/observations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        Alert.alert("Submission failed", data.message || "Something went wrong.");
+        return;
+      }
+
+      Alert.alert("Submitted!", "Your observation has been recorded. Thank you!", [
+        { text: "OK", onPress: () => navigation.navigate("Home") },
+      ]);
+
+      // Reset form
+      setPhenomena([]);
+      setDamage(null);
+      setDescription("");
+      setPhotos([]);
+      setVideo(null);
+      setCaptcha(generateCaptcha());
+      setCaptchaInput("");
+      setPincode("");
+      // Keep state/district as-is — user is likely in the same place
+
+    } catch (err) {
+      Alert.alert("Network error", "Could not reach the server. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -619,8 +660,8 @@ export default function SubmitObservation() {
 
         {/* ── PHOTOS ────────────────────────────────────────────────────── */}
         <Text style={styles.label}>
-          Photos <Text style={styles.required}>*</Text>
-          <Text style={styles.labelNote}> (min 1, max 5)</Text>
+          Photos / Video <Text style={styles.required}>*</Text>
+          <Text style={styles.labelNote}> (at least 1 photo or a video)</Text>
         </Text>
 
         {/* Thumbnail row — scrolls horizontally if many photos */}
@@ -701,8 +742,16 @@ export default function SubmitObservation() {
         </View>
 
         {/* SUBMIT */}
-        <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-          <Text style={styles.submitBtnText}>Submit Observation</Text>
+        <TouchableOpacity
+          style={[styles.submitBtn, submitting && { opacity: 0.6 }]}
+          onPress={handleSubmit}
+          disabled={submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color={WHITE} />
+          ) : (
+            <Text style={styles.submitBtnText}>Submit Observation</Text>
+          )}
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />

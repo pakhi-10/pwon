@@ -112,6 +112,7 @@ export default function Login({ navigation }) {
 
       await AsyncStorage.setItem("token", data.token);
       await AsyncStorage.setItem("userEmail", email.trim());
+      await AsyncStorage.setItem("username", data.username || "");
       navigation.navigate("Home");
     } catch (err) {
       Alert.alert("Network error", "Could not reach the server.");

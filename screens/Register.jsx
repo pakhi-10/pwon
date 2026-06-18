@@ -359,6 +359,7 @@ export default function Register({ navigation }) {
       // Save location to AsyncStorage for SubmitObservation auto-fill
       await AsyncStorage.setItem("savedState", state);
       await AsyncStorage.setItem("savedDistrict", district);
+      await AsyncStorage.setItem("username", username.trim());
 
       navigation.navigate("Home");
     } catch (err) {

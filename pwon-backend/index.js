@@ -142,8 +142,15 @@ app.post('/auth/verify-otp', async (req, res) => {
       [email]
     );
 
+    // Fetch username to return to the frontend so it can save to AsyncStorage
+    const userRow = await pool.query(
+      `SELECT username FROM "Users" WHERE email = $1`,
+      [email]
+    );
+    const username = userRow.rows[0]?.username || null;
+
     // TODO Week 3: replace with real JWT signed with jsonwebtoken
-    res.json({ message: 'Verified', token: 'mock_token_' + email });
+    res.json({ message: 'Verified', token: 'mock_token_' + email, username });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Verification failed' });
@@ -238,6 +245,59 @@ app.get('/location/pincode/:pincode', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Failed to look up pincode' });
+  }
+});
+
+// ── POST /observations ───────────────────────────────────────────────────────
+// Creates a new entry in CrowdSourceEntry.
+// userEmail in the body is the logged-in user's email (from AsyncStorage) or null (anonymous).
+// photo/video paths are left null for now — file upload comes later.
+app.post('/observations', async (req, res) => {
+  const { state, district, date, time, phenomena, damage, description, userEmail, username } = req.body;
+
+  // Basic validation
+  if (!state || !district)
+    return res.status(400).json({ message: 'State and district are required.' });
+  if (!phenomena || phenomena.length === 0)
+    return res.status(400).json({ message: 'At least one phenomenon is required.' });
+
+  // phenomena is an array e.g. ["Rainfall", "Fog"] — join into a single string for the VARCHAR column
+  const phenomStr = phenomena.join(', ');
+
+  // The "user" display column stores the username or 'anonymous'
+  const userDisplay = username || 'anonymous';
+
+  // user_email is the FK into Users(email) — null for anonymous submissions
+  const fkEmail = userEmail || null;
+
+  try {
+    // Generate a simple numeric ID using epoch milliseconds
+    // (CrowdSourceEntry.id is bigint with no sequence defined yet)
+    const id = Date.now();
+
+    await pool.query(
+      `INSERT INTO "CrowdSourceEntry"
+         (id, upload_date, upload_time, phenom, observation, state, district, damage, "user", user_email)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        id,
+        date,           // YYYY-MM-DD string — Postgres accepts this for the date column
+        time,           // HH:MM string — Postgres accepts this for the time column
+        phenomStr,
+        description || null,
+        state,
+        district,
+        damage || null,
+        userDisplay,
+        fkEmail,        // null if anonymous
+      ]
+    );
+
+    res.status(201).json({ message: 'Observation submitted successfully.', id });
+  } catch (err) {
+    console.error('Insert observation error:', err);
+    res.status(500).json({ message: 'Failed to save observation.' });
   }
 });
 
