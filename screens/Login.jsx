@@ -15,7 +15,7 @@ import { COLOURS } from "../constants/colours";
 
 const { BG, WHITE, INPUT_BG, ACCENT } = COLOURS;
 
-const BACKEND_URL = "http://192.168.0.200:3000"; // TODO: replace with your laptop IP
+const BACKEND_URL = "http://103.215.208.67:3000"; // TODO: replace with your laptop IP
 
 export default function Login({ navigation }) {
   const [step, setStep] = useState("email"); // "email" | "otp"
