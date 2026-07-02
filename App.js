@@ -7,6 +7,7 @@ import Register from "./screens/Register";
 import Home from "./screens/Home";
 import SubmitObservation from "./screens/SubmitObservation";
 import MySubmissions from "./screens/MySubmissions";
+import SubmissionDetail from "./screens/SubmissionDetail";
 import ContactUs from "./screens/ContactUs";
 import Feedback from "./screens/Feedback";
 
@@ -22,6 +23,7 @@ export default function App() {
         <Stack.Screen name="Home" component={Home} />
         <Stack.Screen name="SubmitObservation" component={SubmitObservation} />
         <Stack.Screen name="MySubmissions" component={MySubmissions} />
+        <Stack.Screen name="SubmissionDetail" component={SubmissionDetail} />
         <Stack.Screen name="Feedback" component={Feedback} />
         <Stack.Screen name="ContactUs" component={ContactUs} />
       </Stack.Navigator>
